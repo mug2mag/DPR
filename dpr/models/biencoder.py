@@ -19,6 +19,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor as T
 from torch import nn
+import pdb
 
 from dpr.data.biencoder_data import BiEncoderSample
 from dpr.utils.data_utils import Tensorizer
@@ -62,23 +63,30 @@ class BiEncoder(nn.Module):
 
     def __init__(
         self,
+        config,
         question_model: nn.Module,
         ctx_model: nn.Module,
         fix_q_encoder: bool = False,
         fix_ctx_encoder: bool = False,
+        projection_dim: int = 0,
+
     ):
         super(BiEncoder, self).__init__()
         self.question_model = question_model
         self.ctx_model = ctx_model
         self.fix_q_encoder = fix_q_encoder
         self.fix_ctx_encoder = fix_ctx_encoder
-        trans_layer = nn.TransformerEncoderLayer(768, 12) # 12是head的个数
+        trans_layer = nn.TransformerEncoderLayer(768, 12)  # 12是head的个数
         self.trans_encoder = nn.TransformerEncoder(trans_layer, 1)
         cfg = BertConfig.from_pretrained("bert-base-uncased")
         cfg.num_hidden_layers = 1
-        # self.encoder = BertEncoder(cfg)  # 疑问：question和answer拼接的时候是哪个维度拼接的呢
-        self.encoder = BertModel(cfg)  # 疑问：question和answer拼接的时候是哪个维度拼接的呢
-        self.final_dense = nn.Linear(768, 1)  # 疑问：question和answer拼接的时候是哪个维度拼接的呢
+        # self.encoder = BertEncoder(cfg)
+        self.encoder = BertModel(cfg)
+        self.dense = nn.Linear(768 * 2, 768)
+        self.final_dense = nn.Linear(768, 1)
+        self.encode_proj = (
+            nn.Linear(config.hidden_size, projection_dim) if projection_dim != 0 else None
+        )
 
     @staticmethod
     def get_representation(
@@ -155,34 +163,50 @@ class BiEncoder(nn.Module):
         _ctx_seq, ctx_pooled_out, _ctx_hidden = self.get_representation(
             ctx_encoder, context_ids, ctx_segments, ctx_attn_mask, self.fix_ctx_encoder
         )  # q_pooled_out: 8 x 768  ctx_pooled_out: 16 x 768
+
+        # ctx_attn_mask = ctx_attn_mask.unsqueeze(-1).expand(_ctx_seq.size()).float()
+        ctx_attn_mask = ctx_attn_mask.unsqueeze(-1)
+
         _q_seq = torch.cat([_q_seq, _q_seq], dim=0)  # [2, 256, 768]
+        question_ids_ = torch.cat([question_ids, question_ids], dim=0)  # [2, 256, 768]
+        question_attn_mask = torch.cat([question_attn_mask, question_attn_mask], dim=0)
+        question_attn_mask = question_attn_mask.unsqueeze(-1)
+        # question_attn_mask = question_attn_mask.unsqueeze(-1).expand(_q_seq.size()).float()
+
+        # """
+       # 再加上全局 position embeddings 和 type embeddings
+        q_token_type_ids = torch.zeros_like(question_ids_)
+        c_token_type_ids = torch.ones_like(context_ids)
+        x_type_ids = torch.cat([q_token_type_ids, c_token_type_ids], dim=1).long()
+        x_attn_mask = torch.cat([question_attn_mask, ctx_attn_mask], dim=1)
+       # """
         # scores = self.get_scores(_q_seq, _ctx_seq)
-        x = torch.cat([_q_seq, _ctx_seq], dim=1).squeeze(2)   # _q_seq: 8 x 256 x 768  ctx_pooled_out: 16 x 256 x 768; [2, 512, 768]
+        x = torch.cat([_q_seq, _ctx_seq], dim=1)  # _q_seq: 8 x 256 x 768  ctx_pooled_out: 16 x 256 x 768; [2, 512, 768]
+        # x = torch.cat([_q_seq, _ctx_seq], dim=1).squeeze(2)   # _q_seq: 8 x 256 x 768  ctx_pooled_out: 16 x 256 x 768; [2, 512, 768]
+
         # x = self.trans_encoder(scores)
         # todo: 这里换成用HFBertEncoder 类似q_encoder试试？或者用self.encoder：BertEncoder试试
         # encoder_outputs = self.encoder(x)
-        encoder_outputs = self.encoder(inputs_embeds=x)
+        # encoder_outputs = self.encoder(inputs_embeds=x)
+
+        encoder_outputs = self.encoder(inputs_embeds=x, token_type_ids=x_type_ids, attention_mask=x_attn_mask)
         sequence_output = encoder_outputs[0]
-        pooled_output = sequence_output[:, representation_token_pos, :]
+        pooled_output = sequence_output[:, representation_token_pos, :]  # [1,768]
 
         # pooled_output = BertPooler(sequence_output)
 
         # x = self.trans_encoder(x)  # [2, 512, 768]
 
-        # mean_ = x.mean(1)
-        # max_ = torch.max(x, dim=1)
-        # pooled = torch.cat((mean_, max_[0]), dim=1)
-        # y = x[:, 0, :]  # [2, 768]
-        # y = pooled  # [2, 768]
-        # d_cls_id = _q_seq.shape[1]
-        # x = torch.cat([x[:, 0, :], x[:, d_cls_id-1, :]], dim=0)
-        # out = self.dense(y)  # [2, 2]
-        # out = self.dense(pooled)  # [2, 1]
-        # predictions = self.final_dense(y)
+        avg_pooled = sequence_output.mean(1)
+        max_pooled = torch.max(sequence_output, dim=1)
+        pooled = torch.cat((avg_pooled, max_pooled[0]), dim=1)
+        pooled = self.dense(pooled)
+
+        predictions = self.final_dense(pooled)
 
         # return q_pooled_out, ctx_pooled_out
-        retn = pooled_output.max(-1).values
-        return retn
+        # retn = pooled_output.max(-1).values
+        return predictions
 
     # TODO delete once moved to the new method
     @classmethod
@@ -434,8 +458,8 @@ class BiEncoderNllLoss(object):
         q_num = q_vectors.size(0)
         scores = q_vectors.view(q_num, -1)  # [4,2]
 
-        sigmoid_scores = torch.sigmoid(scores)  # [4, 2]
-        sigmoid_scores = sigmoid_scores.view(-1)
+        # sigmoid_scores = torch.sigmoid(scores)  # [4, 2]
+        sigmoid_scores = scores.view(-1)
         new_positive_idx_per_question = [float(0)]*q_num
         for i in positive_idx_per_question:
             new_positive_idx_per_question[i] = float(1)
@@ -447,14 +471,14 @@ class BiEncoderNllLoss(object):
         # )
         loss_fun = nn.BCEWithLogitsLoss()
         # loss_fun = nn.CrossEntropyLoss()
-        loss = loss_fun(sigmoid_scores, torch.tensor(new_positive_idx_per_question).to(sigmoid_scores.device))
+        loss = loss_fun(sigmoid_scores, torch.tensor(new_positive_idx_per_question).to(scores.device))
         # loss = self.compute_loss(sigmoid_scores, new_positive_idx_per_question)
 
         # max_score, max_idxs = torch.max(softmax_scores, 1)
         # correct_predictions_count = (
         #     max_idxs == torch.tensor(new_positive_idx_per_question).to(max_idxs.device)
         # ).sum()
-        correct_predictions_count = torch.tensor([len([i for i in sigmoid_scores if i > 0.5])])
+        correct_predictions_count = torch.tensor([len([i for i in q_vectors if i > 0.5])])
 
         if loss_scale:
             loss.mul_(loss_scale)

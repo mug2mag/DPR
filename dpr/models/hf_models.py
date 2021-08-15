@@ -47,7 +47,8 @@ def get_bert_biencoder_components(cfg, inference_only: bool = False, **kwargs):
     fix_ctx_encoder = cfg.fix_ctx_encoder if hasattr(cfg, "fix_ctx_encoder") else False
 
     biencoder = BiEncoder(
-        question_encoder, ctx_encoder, fix_ctx_encoder=fix_ctx_encoder
+        cfg.encoder.pretrained_model_cfg,
+        question_encoder, ctx_encoder, fix_ctx_encoder=fix_ctx_encoder, projection_dim=cfg.encoder.projection_dim
     )
 
     optimizer = (

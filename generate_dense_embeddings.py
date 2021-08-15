@@ -39,6 +39,7 @@ setup_logger(logger)
 
 
 def gen_ctx_vectors(
+        out_file,
     cfg: DictConfig,
     ctx_rows: List[Tuple[object, BiEncoderPassage]],
     model: nn.Module,
@@ -50,7 +51,7 @@ def gen_ctx_vectors(
     total = 0
     results = []
     for j, batch_start in enumerate(range(0, n, bsz)):
-        batch = ctx_rows[batch_start : batch_start + bsz]
+        batch = ctx_rows[batch_start: batch_start + bsz]
         batch_token_tensors = [
             tensorizer.text_to_tensor(
                 ctx[1].text, title=ctx[1].title if insert_title else None
@@ -79,27 +80,36 @@ def gen_ctx_vectors(
 
         # TODO: refactor to avoid 'if'
         if extra_info:
-            results.extend(
-                [
+            tmp = [
                     (ctx_ids[i], out[i].view(-1).numpy(), *extra_info[i])
                     for i in range(out.size(0))
                 ]
-            )
+            # results.extend(
+            #     [
+            #         (ctx_ids[i], out[i].view(-1).numpy(), *extra_info[i])
+            #         for i in range(out.size(0))
+            #     ]
+            # )
         else:
-            results.extend(
-                [(ctx_ids[i], out[i].view(-1).numpy()) for i in range(out.size(0))]
-            )
+            tmp = [(ctx_ids[i], out[i].view(-1).numpy()) for i in range(out.size(0))]
+            # results.extend(
+            #     [(ctx_ids[i], out[i].view(-1).numpy()) for i in range(out.size(0))]
+            # )
 
-        if total % 10 == 0:
-            logger.info("Encoded passages %d", total)
-    return results
+        with open(out_file+"_"+str(total), mode="wb") as f:
+            pickle.dump(tmp, f)
+        logger.info("Total passages processed Written {}".format(total))
+
+    #     if total % 10 == 0:
+    #         logger.info("Encoded passages %d", total)
+    # return results
 
 
 @hydra.main(config_path="conf", config_name="gen_embs")
 def main(cfg: DictConfig):
 
     assert cfg.model_file, "Please specify encoder checkpoint as model_file param"
-    assert cfg.ctx_src, "Please specify passages source as ctx_src param"
+    assert cfg.ctx_src, "Please specify passages source as ctx_src param"  # 'data.wikipedia_split.psgs_w100'
 
     cfg = setup_cfg_gpu(cfg)
 
@@ -137,7 +147,7 @@ def main(cfg: DictConfig):
         for (key, value) in saved_state.model_dict.items()
         if key.startswith("ctx_model.")
     }
-    model_to_load.load_state_dict(ctx_state)
+    model_to_load.load_state_dict(ctx_state)  # 只load了ctx_state的部分
 
     logger.info("reading data source: %s", cfg.ctx_src)
 
@@ -158,20 +168,30 @@ def main(cfg: DictConfig):
     )
     shard_passages = all_passages[start_idx:end_idx]
 
-    data = gen_ctx_vectors(cfg, shard_passages, encoder, tensorizer, True)
-
     file = cfg.out_file + "_" + str(cfg.shard_id)
     pathlib.Path(os.path.dirname(file)).mkdir(parents=True, exist_ok=True)
     logger.info("Writing results to %s" % file)
-    with open(file, mode="wb") as f:
-        pickle.dump(data, f)
 
-    logger.info("Total passages processed %d. Written to %s", len(data), file)
+    gen_ctx_vectors(file, cfg, shard_passages, encoder, tensorizer, True)
+    # data = gen_ctx_vectors(file, cfg, shard_passages, encoder, tensorizer, True)
+
+    # file = cfg.out_file + "_" + str(cfg.shard_id)
+    # pathlib.Path(os.path.dirname(file)).mkdir(parents=True, exist_ok=True)
+    # logger.info("Writing results to %s" % file)
+    # with open(file, mode="wb") as f:
+    #     pickle.dump(data, f)
+
+    # logger.info("Total passages processed %d. Written to %s", len(data), file)
+    logger.info("Total passages processed Written!!!!!!!!!!!!!!!")
 
 
 if __name__ == "__main__":
     main()
 
 """
-python generate_dense_embeddings.py model_file="/home/duhuifang/git_local/DPR/downloads/mycheckpointsls/dpr_biencoder.35"
+python generate_dense_embeddings.py  model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.7 ctx_src={name of the passages resource, set to dpr_wiki to use our original wikipedia split} \ shard_id=0 num_shards=2 out_file={result files location + name PREFX}	
+python generate_dense_embeddings.py  model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.7 ctx_src=dpr_wiki shard_id=0 num_shards=2 out_file=/home/duhuifang/git_local/DPR/downloads/mydata/ctx_em/embeddings	
+python generate_dense_embeddings.py  model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.7 ctx_src=dpr_wiki out_file=/home/duhuifang/git_local/DPR/downloads/mydata/ctx_embeddings
+python generate_dense_embeddings.py  model_file=/data/home/scv2223/archive/mycheckpoints/dpr_biencoder.7 ctx_src=dpr_wiki out_file=/data/home/scv2223/archive/embeddings	
+python generate_dense_embeddings.py  model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.7 ctx_src=dpr_wiki out_file=/home/duhuifang/git_local/DPR/downloads/mydata/ctx_embeddings num_shards=2	
 """

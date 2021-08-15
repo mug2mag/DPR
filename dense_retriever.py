@@ -73,10 +73,10 @@ def generate_question_vectors(
             else:
                 batch_token_tensors = [
                     tensorizer.text_to_tensor(q) for q in batch_questions
-                ]
+                ]  # 长度是256的一维
 
-            q_ids_batch = torch.stack(batch_token_tensors, dim=0).cuda()
-            q_seg_batch = torch.zeros_like(q_ids_batch).cuda()
+            q_ids_batch = torch.stack(batch_token_tensors, dim=0).cuda()  # 128
+            q_seg_batch = torch.zeros_like(q_ids_batch).cuda()  # [128，256]
             q_attn_mask = tensorizer.get_attn_mask(q_ids_batch)
 
             if selector:
@@ -92,7 +92,7 @@ def generate_question_vectors(
             else:
                 _, out, _ = question_encoder(q_ids_batch, q_seg_batch, q_attn_mask)
 
-            query_vectors.extend(out.cpu().split(1, dim=0))  # 所以batch_size是什么作用呢
+            query_vectors.extend(out.cpu().split(1, dim=0))
 
             if len(query_vectors) % 100 == 0:
                 logger.info("Encoded queries %d", len(query_vectors))
@@ -346,7 +346,7 @@ def main(cfg: DictConfig):
         question_answers.append(answers)
 
     index = hydra.utils.instantiate(cfg.indexers[cfg.indexer])
-    logger.info("Index class %s ", type(index))
+    logger.info("Index class %s ", type(index))  # <class 'dpr.indexer.faiss_indexers.DenseFlatIndexer'>
     index_buffer_sz = index.buffer_size
     index.init_index(vector_size)
     retriever = LocalFaissRetriever(encoder, cfg.batch_size, tensorizer, index)  # encoder还是用的question model
@@ -387,7 +387,7 @@ def main(cfg: DictConfig):
         assert (
             index_path
         ), "Either encoded_ctx_files or index_path parameter should be set."
-
+    # TODO 生成的passage的embedding是不是也要重新生成？？
     input_paths = []
     path_id_prefixes = []
     for i, pattern in enumerate(ctx_files_patterns):
@@ -462,7 +462,7 @@ if __name__ == "__main__":
 '''
 python dense_retriever.py model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.35 qa_dataset=nq_test encoded_ctx_files=[\"/home/duhuifang/git_local/DPR/downloads/data/retriever_results/nq/single-adv-hn/wikipedia_passages_*\"] ctx_datatsets=[dpr_wiki] out_file=/home/duhuifang/git_local/DPR/downloads/evaluation
 python dense_retriever.py model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.3 qa_dataset=nq_test encoded_ctx_files=[\"/home/duhuifang/git_local/DPR/downloads/data/retriever_results/nq/single/wikipedia_passages_*\"] ctx_datatsets=[dpr_wiki] out_file=/home/duhuifang/git_local/DPR/downloads/evaluation
-python dense_retriever.py model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.0 qa_dataset=nq_test encoded_ctx_files=[\"/home/duhuifang/git_local/DPR/downloads/data/retriever_results/nq/single/wikipedia_passages_*\"] ctx_datatsets=[dpr_wiki] out_file=/home/duhuifang/git_local/DPR/downloads/evaluation
+python dense_retriever.py model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.7 qa_dataset=nq_test encoded_ctx_files=[\"/home/duhuifang/git_local/DPR/downloads/mydata/ctx_embeddings_0_*\"] ctx_datatsets=[dpr_wiki] out_file=/home/duhuifang/git_local/DPR/downloads/evaluation
 python dense_retriever.py model_file=/home/duhuifang/git_local/DPR/dpr_biencoder.1 qa_dataset=nq_test encoded_ctx_files=[\"/home/duhuifang/git_local/DPR/downloads/data/retriever_results/nq/single/wikipedia_passages_*\"] ctx_datatsets=[dpr_wiki] out_file=/home/duhuifang/git_local/DPR/downloads/evaluation
 python dense_retriever.py model_file=/home/duhuifang/git_local/DPR/dpr_biencoder.7 qa_dataset=nq_test encoded_ctx_files=[\"/home/duhuifang/git_local/DPR/downloads/data/retriever_results/nq/single/wikipedia_passages_*\"] ctx_datatsets=[dpr_wiki] out_file=/home/duhuifang/git_local/DPR/downloads/evaluation
 

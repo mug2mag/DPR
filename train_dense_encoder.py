@@ -850,8 +850,11 @@ if __name__ == "__main__":
     python train_dense_encoder.py -m torch.distributed.launch --nproc_per_node=8 train=biencoder_nq train_datasets=[nq_train] dev_datasets=[nq_dev] train=biencoder_nq output_dir=/home/duhuifang/git_local/DPR/downloads/mycheckpoints
     python train_dense_encoder.py -m torch.distributed.launch train=biencoder_nq train_datasets=[nq_train] dev_datasets=[nq_dev] train=biencoder_nq output_dir=/home/duhf/git_local/DPR/downloads/mycheckpoints
     
+    python -m torch.distributed.launch --nproc_per_node=2 train_dense_encoder.py train=biencoder_nq train_datasets=[nq_train] dev_datasets=[nq_dev] output_dir=/home/duhuifang/git_local/DPR/downloads/mycheckpoints model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.7
     python -m torch.distributed.launch --nproc_per_node=2 train_dense_encoder.py train=biencoder_nq train_datasets=[nq_train] dev_datasets=[nq_dev] output_dir=/home/duhuifang/git_local/DPR/downloads/mycheckpoints
     python -m torch.distributed.launch --nproc_per_node=2 train_dense_encoder.py train=biencoder_default train_datasets=[nq_train] dev_datasets=[nq_dev] output_dir=/home/duhuifang/git_local/DPR/downloads/mycheckpoints model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.19
+    
+    python -m torch.distributed.launch --nproc_per_node=4 train_dense_encoder.py train=biencoder_nq train_datasets=[nq_train] dev_datasets=[nq_dev] output_dir=/data/home/scv2223/archive/mycheckpoints
 
     没有用到negative examples;文章中说用了一个BM25的负例，还是说好多个gold 以及一个BM25呢（这块没搞清楚）：Our best model uses gold passages from the same mini-batch and one BM25 negative passage. 
     '''
