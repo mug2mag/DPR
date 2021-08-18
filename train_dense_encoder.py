@@ -560,6 +560,7 @@ class BiEncoderTrainer(object):
             if (i + 1) % cfg.train.gradient_accumulation_steps == 0:
                 self.optimizer.step()
                 scheduler.step()
+                self.optimizer.zero_grad()
                 self.biencoder.zero_grad()
 
             if i % log_result_step == 0:
@@ -655,6 +656,7 @@ class BiEncoderTrainer(object):
 
 
 def _calc_loss(
+    input,
     cfg,
     loss_function,
     local_q_vector,
@@ -725,6 +727,7 @@ def _calc_loss(
         hard_negatives_per_question = local_hard_negatives_idxs
 
     loss, is_correct = loss_function.calc(
+        input,
         global_q_vector,
         # global_ctxs_vector,
         positive_idx_per_question,
@@ -780,6 +783,7 @@ def _do_biencoder_fwd_pass(
     loss_function = BiEncoderNllLoss()
 
     loss, is_correct = _calc_loss(
+        input,
         cfg,
         loss_function,
         last_vector,
@@ -788,7 +792,7 @@ def _do_biencoder_fwd_pass(
         loss_scale=loss_scale,
     )
 
-    is_correct = is_correct.sum().item()
+    # is_correct = is_correct.sum().item()
 
     if cfg.n_gpu > 1:
         loss = loss.mean()
@@ -852,6 +856,7 @@ if __name__ == "__main__":
     
     python -m torch.distributed.launch --nproc_per_node=2 train_dense_encoder.py train=biencoder_nq train_datasets=[nq_train] dev_datasets=[nq_dev] output_dir=/home/duhuifang/git_local/DPR/downloads/mycheckpoints model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.7
     python -m torch.distributed.launch --nproc_per_node=2 train_dense_encoder.py train=biencoder_nq train_datasets=[nq_train] dev_datasets=[nq_dev] output_dir=/home/duhuifang/git_local/DPR/downloads/mycheckpoints
+    python -m torch.distributed.launch --nproc_per_node=4 train_dense_encoder.py train=biencoder_nq train_datasets=[nq_train] dev_datasets=[nq_dev] output_dir=/home/duhuifang/git_local/DPR/downloads/mycheckpoints
     python -m torch.distributed.launch --nproc_per_node=2 train_dense_encoder.py train=biencoder_default train_datasets=[nq_train] dev_datasets=[nq_dev] output_dir=/home/duhuifang/git_local/DPR/downloads/mycheckpoints model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.19
     
     python -m torch.distributed.launch --nproc_per_node=4 train_dense_encoder.py train=biencoder_nq train_datasets=[nq_train] dev_datasets=[nq_dev] output_dir=/data/home/scv2223/archive/mycheckpoints

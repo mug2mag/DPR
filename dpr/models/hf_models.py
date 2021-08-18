@@ -47,8 +47,8 @@ def get_bert_biencoder_components(cfg, inference_only: bool = False, **kwargs):
     fix_ctx_encoder = cfg.fix_ctx_encoder if hasattr(cfg, "fix_ctx_encoder") else False
 
     biencoder = BiEncoder(
-        cfg.encoder.pretrained_model_cfg,
-        question_encoder, ctx_encoder, fix_ctx_encoder=fix_ctx_encoder, projection_dim=cfg.encoder.projection_dim
+        cfg,
+        question_encoder, ctx_encoder, fix_ctx_encoder=fix_ctx_encoder
     )
 
     optimizer = (
@@ -173,6 +173,9 @@ def get_bert_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
     return BertTokenizer.from_pretrained(
         pretrained_cfg_name, do_lower_case=do_lower_case
     )
+    # return BertTokenizer.from_pretrained(
+    #     "/data/home/scv2223/archive/bert-base-uncased", local_files_only=True, do_lower_case=do_lower_case
+    # )
 
 
 def get_roberta_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
@@ -203,6 +206,7 @@ class HFBertEncoder(BertModel):
         **kwargs
     ) -> BertModel:
         cfg = BertConfig.from_pretrained(cfg_name if cfg_name else "bert-base-uncased")
+        # cfg = BertConfig.from_pretrained("/data/home/scv2223/archive/bert-base-uncased", local_files_only=True)
         # cfg.num_hidden_layers = 4
         # cfg.hidden_size = 480
         # cfg.num_attention_heads = 6
@@ -215,6 +219,9 @@ class HFBertEncoder(BertModel):
             return cls.from_pretrained(
                 cfg_name, config=cfg, project_dim=projection_dim, **kwargs
             )
+            # return cls.from_pretrained(
+            #     "/data/home/scv2223/archive/bert-base-uncased", local_files_only=True, config=cfg, project_dim=projection_dim, **kwargs
+            # )
         else:
             return HFBertEncoder(cfg, project_dim=projection_dim)
 

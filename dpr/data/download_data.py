@@ -514,6 +514,7 @@ def download(resource_key: str, out_dir: str = None):
             resource_key,
             out_dir,
         )
+        print("local_file!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", local_file)
         data_files.append(local_file)
 
     license_files = download_info.get("license_files", None)

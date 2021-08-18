@@ -37,6 +37,10 @@ BiEncoderBatch = collections.namedtuple(
         "is_positive",
         "hard_negatives",
         "encoder_type",
+        "questions",
+        "positive_contexts",
+        "negative_contexts",
+        "all_contexts",
     ],
 )
 # TODO: it is only used by _select_span_with_token. Move them to utils
@@ -68,9 +72,9 @@ class BiEncoder(nn.Module):
         ctx_model: nn.Module,
         fix_q_encoder: bool = False,
         fix_ctx_encoder: bool = False,
-        projection_dim: int = 0,
 
     ):
+        self.config = config
         super(BiEncoder, self).__init__()
         self.question_model = question_model
         self.ctx_model = ctx_model
@@ -79,14 +83,13 @@ class BiEncoder(nn.Module):
         trans_layer = nn.TransformerEncoderLayer(768, 12)  # 12是head的个数
         self.trans_encoder = nn.TransformerEncoder(trans_layer, 1)
         cfg = BertConfig.from_pretrained("bert-base-uncased")
+        # cfg = BertConfig.from_pretrained("/data/home/scv2223/archive/bert-base-uncased", local_files_only=True)
+
         cfg.num_hidden_layers = 1
         # self.encoder = BertEncoder(cfg)
         self.encoder = BertModel(cfg)
         self.dense = nn.Linear(768 * 2, 768)
         self.final_dense = nn.Linear(768, 1)
-        self.encode_proj = (
-            nn.Linear(config.hidden_size, projection_dim) if projection_dim != 0 else None
-        )
 
     @staticmethod
     def get_representation(
@@ -164,38 +167,38 @@ class BiEncoder(nn.Module):
             ctx_encoder, context_ids, ctx_segments, ctx_attn_mask, self.fix_ctx_encoder
         )  # q_pooled_out: 8 x 768  ctx_pooled_out: 16 x 768
 
+        # last_question_ids = []
+        # for single_question_id in question_ids:
+        #     single_cat_question_id = torch.cat([single_question_id.unsqueeze(0)]*batch_size)
+        #     last_question_ids.append(single_cat_question_id)
+        # last_question_ids_tensor = torch.cat(last_question_ids, dim=0)
+        last_question_ids_tensor = self.cat_question(question_ids)
+
+        # last_q_seq = []
+        # for single_q_seq in _q_seq:
+        #     single_cat_q_seq = torch.cat([single_q_seq.unsqueeze(0)]*batch_size)
+        #     last_q_seq.append(single_cat_q_seq)
+        # last_q_seq_tensor = torch.cat(last_q_seq, dim=0)
+        last_q_seq_tensor = self.cat_question(_q_seq)
+
         # ctx_attn_mask = ctx_attn_mask.unsqueeze(-1).expand(_ctx_seq.size()).float()
         ctx_attn_mask = ctx_attn_mask.unsqueeze(-1)
 
-        _q_seq = torch.cat([_q_seq, _q_seq], dim=0)  # [2, 256, 768]
-        question_ids_ = torch.cat([question_ids, question_ids], dim=0)  # [2, 256, 768]
-        question_attn_mask = torch.cat([question_attn_mask, question_attn_mask], dim=0)
-        question_attn_mask = question_attn_mask.unsqueeze(-1)
-        # question_attn_mask = question_attn_mask.unsqueeze(-1).expand(_q_seq.size()).float()
+        last_question_attn_mask = self.cat_question(question_attn_mask)
+        last_question_attn_mask = last_question_attn_mask.unsqueeze(-1)
 
         # """
        # 再加上全局 position embeddings 和 type embeddings
-        q_token_type_ids = torch.zeros_like(question_ids_)
+        q_token_type_ids = torch.zeros_like(last_question_ids_tensor)
         c_token_type_ids = torch.ones_like(context_ids)
         x_type_ids = torch.cat([q_token_type_ids, c_token_type_ids], dim=1).long()
-        x_attn_mask = torch.cat([question_attn_mask, ctx_attn_mask], dim=1)
+        x_attn_mask = torch.cat([last_question_attn_mask, ctx_attn_mask], dim=1)
        # """
-        # scores = self.get_scores(_q_seq, _ctx_seq)
-        x = torch.cat([_q_seq, _ctx_seq], dim=1)  # _q_seq: 8 x 256 x 768  ctx_pooled_out: 16 x 256 x 768; [2, 512, 768]
-        # x = torch.cat([_q_seq, _ctx_seq], dim=1).squeeze(2)   # _q_seq: 8 x 256 x 768  ctx_pooled_out: 16 x 256 x 768; [2, 512, 768]
 
-        # x = self.trans_encoder(scores)
-        # todo: 这里换成用HFBertEncoder 类似q_encoder试试？或者用self.encoder：BertEncoder试试
-        # encoder_outputs = self.encoder(x)
-        # encoder_outputs = self.encoder(inputs_embeds=x)
+        x = torch.cat([last_q_seq_tensor, _ctx_seq], dim=1)
 
         encoder_outputs = self.encoder(inputs_embeds=x, token_type_ids=x_type_ids, attention_mask=x_attn_mask)
         sequence_output = encoder_outputs[0]
-        pooled_output = sequence_output[:, representation_token_pos, :]  # [1,768]
-
-        # pooled_output = BertPooler(sequence_output)
-
-        # x = self.trans_encoder(x)  # [2, 512, 768]
 
         avg_pooled = sequence_output.mean(1)
         max_pooled = torch.max(sequence_output, dim=1)
@@ -204,104 +207,15 @@ class BiEncoder(nn.Module):
 
         predictions = self.final_dense(pooled)
 
-        # return q_pooled_out, ctx_pooled_out
-        # retn = pooled_output.max(-1).values
         return predictions
 
-    # TODO delete once moved to the new method
-    @classmethod
-    def create_biencoder_input(
-        cls,
-        samples: List,
-        tensorizer: Tensorizer,
-        insert_title: bool,
-        num_hard_negatives: int = 0,
-        num_other_negatives: int = 0,
-        shuffle: bool = True,
-        shuffle_positives: bool = False,
-        hard_neg_fallback: bool = True,
-    ) -> BiEncoderBatch:
-        """
-        Creates a batch of the biencoder training tuple.
-        :param samples: list of data items (from json) to create the batch for
-        :param tensorizer: components to create model input tensors from a text sequence
-        :param insert_title: enables title insertion at the beginning of the context sequences
-        :param num_hard_negatives: amount of hard negatives per question (taken from samples' pools)
-        :param num_other_negatives: amount of other negatives per question (taken from samples' pools)
-        :param shuffle: shuffles negative passages pools
-        :param shuffle_positives: shuffles positive passages pools
-        :return: BiEncoderBatch tuple
-        """
-        question_tensors = []
-        ctx_tensors = []
-        positive_ctx_indices = []
-        hard_neg_ctx_indices = []
-
-        for sample in samples:
-            # ctx+ & [ctx-] composition
-            # as of now, take the first(gold) ctx+ only
-            if shuffle and shuffle_positives:
-                positive_ctxs = sample["positive_ctxs"]
-                positive_ctx = positive_ctxs[np.random.choice(len(positive_ctxs))]
-            else:
-                positive_ctx = sample["positive_ctxs"][0]
-
-            neg_ctxs = sample["negative_ctxs"]
-            hard_neg_ctxs = sample["hard_negative_ctxs"]
-
-            if shuffle:
-                random.shuffle(neg_ctxs)
-                random.shuffle(hard_neg_ctxs)
-
-            if hard_neg_fallback and len(hard_neg_ctxs) == 0:
-                hard_neg_ctxs = neg_ctxs[0:num_hard_negatives]
-
-            neg_ctxs = neg_ctxs[0:num_other_negatives]
-            hard_neg_ctxs = hard_neg_ctxs[0:num_hard_negatives]
-
-            all_ctxs = [positive_ctx] + neg_ctxs + hard_neg_ctxs
-            hard_negatives_start_idx = 1
-            hard_negatives_end_idx = 1 + len(hard_neg_ctxs)
-
-            current_ctxs_len = len(ctx_tensors)
-
-            sample_ctxs_tensors = [
-                tensorizer.text_to_tensor(
-                    ctx["text"],
-                    title=ctx["title"] if (insert_title and "title" in ctx) else None,
-                )
-                for ctx in all_ctxs
-            ]
-
-            ctx_tensors.extend(sample_ctxs_tensors)
-            positive_ctx_indices.append(current_ctxs_len)
-            hard_neg_ctx_indices.append(
-                [
-                    i
-                    for i in range(
-                        current_ctxs_len + hard_negatives_start_idx,
-                        current_ctxs_len + hard_negatives_end_idx,
-                    )
-                ]
-            )
-
-            question_tensors.append(tensorizer.text_to_tensor(question))
-
-        ctxs_tensor = torch.cat([ctx.view(1, -1) for ctx in ctx_tensors], dim=0)
-        questions_tensor = torch.cat([q.view(1, -1) for q in question_tensors], dim=0)
-
-        ctx_segments = torch.zeros_like(ctxs_tensor)
-        question_segments = torch.zeros_like(questions_tensor)
-
-        return BiEncoderBatch(
-            questions_tensor,
-            question_segments,
-            ctxs_tensor,
-            ctx_segments,
-            positive_ctx_indices,
-            hard_neg_ctx_indices,
-            "question",
-        )
+    def cat_question(self, quesiton_ids):
+        cat_result = []
+        for single_q in quesiton_ids:
+            single_cat_q = torch.cat([single_q.unsqueeze(0)]*2)
+            cat_result.append(single_cat_q)
+        cat_result = torch.cat(cat_result, dim=0)
+        return cat_result
 
     @classmethod
     def create_biencoder_input2(
@@ -331,6 +245,10 @@ class BiEncoder(nn.Module):
         ctx_tensors = []
         positive_ctx_indices = []
         hard_neg_ctx_indices = []
+        questions = []
+        positive_contexts = []
+        negative_contexts = []
+        all_contexts = []
 
         for sample in samples:
             # ctx+ & [ctx-] composition
@@ -341,6 +259,9 @@ class BiEncoder(nn.Module):
                 positive_ctx = positive_ctxs[np.random.choice(len(positive_ctxs))]
             else:
                 positive_ctx = sample.positive_passages[0]
+
+            positive_contexts.append(positive_ctx.text)
+            all_contexts.append(positive_ctx.text)
 
             neg_ctxs = sample.negative_passages
             hard_neg_ctxs = sample.hard_negative_passages
@@ -356,6 +277,8 @@ class BiEncoder(nn.Module):
 
             neg_ctxs = neg_ctxs[0:num_other_negatives]
             hard_neg_ctxs = hard_neg_ctxs[0:num_hard_negatives]
+            negative_contexts.append(hard_neg_ctxs[0].text)
+            all_contexts.append(hard_neg_ctxs[0].text)
 
             all_ctxs = [positive_ctx] + neg_ctxs + hard_neg_ctxs
             hard_negatives_start_idx = 1
@@ -364,6 +287,7 @@ class BiEncoder(nn.Module):
             current_ctxs_len = len(ctx_tensors)
 
             question = sample.query
+            questions.append(question)
             # question = cls.build_question_with_special_tokens(question)  # 加上cls标签
 
             sample_ctxs_tensors = [
@@ -413,6 +337,10 @@ class BiEncoder(nn.Module):
             positive_ctx_indices,
             hard_neg_ctx_indices,
             "question",
+            questions,
+            positive_contexts,
+            negative_contexts,
+            all_contexts
         )
 
     @classmethod
@@ -439,6 +367,7 @@ class BiEncoder(nn.Module):
 class BiEncoderNllLoss(object):
     def calc(
         self,
+        input,
         q_vectors: T,
         # ctx_vectors: T,
         positive_idx_per_question: list,
@@ -454,12 +383,18 @@ class BiEncoderNllLoss(object):
         """
         # scores = self.get_scores(q_vectors, ctx_vectors)  # 计算相似度 q和c的dot  q:16 x 768, c: 32 x 768
 
-        # if len(q_vectors.size()) > 1:
         q_num = q_vectors.size(0)
         scores = q_vectors.view(q_num, -1)  # [4,2]
 
-        # sigmoid_scores = torch.sigmoid(scores)  # [4, 2]
-        sigmoid_scores = scores.view(-1)
+        #### manual test ###
+        # questions = input.questions
+        # all_contexts = input.all_contexts
+        # negative_contexts = input.negative_contexts
+        # positive_contexts = input.positive_contexts
+        sigmoid_scores = torch.sigmoid(scores)  # [4, 2]
+        #### manual test ###
+
+        prediction_scores = scores.view(-1)
         new_positive_idx_per_question = [float(0)]*q_num
         for i in positive_idx_per_question:
             new_positive_idx_per_question[i] = float(1)
@@ -471,14 +406,12 @@ class BiEncoderNllLoss(object):
         # )
         loss_fun = nn.BCEWithLogitsLoss()
         # loss_fun = nn.CrossEntropyLoss()
-        loss = loss_fun(sigmoid_scores, torch.tensor(new_positive_idx_per_question).to(scores.device))
+        loss = loss_fun(prediction_scores, torch.tensor(new_positive_idx_per_question).to(scores.device))
         # loss = self.compute_loss(sigmoid_scores, new_positive_idx_per_question)
 
-        # max_score, max_idxs = torch.max(softmax_scores, 1)
-        # correct_predictions_count = (
-        #     max_idxs == torch.tensor(new_positive_idx_per_question).to(max_idxs.device)
-        # ).sum()
-        correct_predictions_count = torch.tensor([len([i for i in q_vectors if i > 0.5])])
+        correct_predictions_count = [sigmoid_scores[index] > sigmoid_scores[index+1] for index in positive_idx_per_question if index+1 < len(sigmoid_scores)].count(True)
+
+        # correct_predictions_count = torch.tensor([len([i for i in q_vectors if i > 0.5])])
 
         if loss_scale:
             loss.mul_(loss_scale)
