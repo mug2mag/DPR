@@ -191,7 +191,7 @@ if __name__ == "__main__":
 """
 python generate_dense_embeddings.py  model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.7 ctx_src={name of the passages resource, set to dpr_wiki to use our original wikipedia split} \ shard_id=0 num_shards=2 out_file={result files location + name PREFX}	
 python generate_dense_embeddings.py  model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.7 ctx_src=dpr_wiki shard_id=0 num_shards=2 out_file=/home/duhuifang/git_local/DPR/downloads/mydata/ctx_em/embeddings	
-python generate_dense_embeddings.py  model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.8 ctx_src=dpr_wiki out_file=/home/duhuifang/git_local/DPR/downloads/mydata/ctx_embeddings
+python generate_dense_embeddings.py  model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.14 ctx_src=dpr_wiki out_file=/home/duhuifang/git_local/DPR/downloads/mydata/ctx_embeddings
 python generate_dense_embeddings.py  model_file=/data/home/scv2223/archive/mycheckpoints/dpr_biencoder.7 ctx_src=dpr_wiki out_file=/data/home/scv2223/archive/embeddings	
 python generate_dense_embeddings.py  model_file=/home/duhuifang/git_local/DPR/downloads/mycheckpoints/dpr_biencoder.7 ctx_src=dpr_wiki out_file=/home/duhuifang/git_local/DPR/downloads/mydata/ctx_embeddings num_shards=2	
 """

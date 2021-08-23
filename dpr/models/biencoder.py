@@ -167,35 +167,23 @@ class BiEncoder(nn.Module):
             ctx_encoder, context_ids, ctx_segments, ctx_attn_mask, self.fix_ctx_encoder
         )  # q_pooled_out: 8 x 768  ctx_pooled_out: 16 x 768
 
-        # last_question_ids = []
-        # for single_question_id in question_ids:
-        #     single_cat_question_id = torch.cat([single_question_id.unsqueeze(0)]*batch_size)
-        #     last_question_ids.append(single_cat_question_id)
-        # last_question_ids_tensor = torch.cat(last_question_ids, dim=0)
-        last_question_ids_tensor = self.cat_question(question_ids)
+        extended_question_ids = self.double_question(question_ids)
 
-        # last_q_seq = []
-        # for single_q_seq in _q_seq:
-        #     single_cat_q_seq = torch.cat([single_q_seq.unsqueeze(0)]*batch_size)
-        #     last_q_seq.append(single_cat_q_seq)
-        # last_q_seq_tensor = torch.cat(last_q_seq, dim=0)
-        last_q_seq_tensor = self.cat_question(_q_seq)
+        extended_q_seq = self.double_question(_q_seq)
 
-        # ctx_attn_mask = ctx_attn_mask.unsqueeze(-1).expand(_ctx_seq.size()).float()
-        ctx_attn_mask = ctx_attn_mask.unsqueeze(-1)
-
-        last_question_attn_mask = self.cat_question(question_attn_mask)
-        last_question_attn_mask = last_question_attn_mask.unsqueeze(-1)
+        # ctx_attn_mask = ctx_attn_mask.unsqueeze(-1)
+        extended_question_attn_mask = self.double_question(question_attn_mask)
+        # last_question_attn_mask = last_question_attn_mask.unsqueeze(-1)
 
         # """
        # 再加上全局 position embeddings 和 type embeddings
-        q_token_type_ids = torch.zeros_like(last_question_ids_tensor)
+        q_token_type_ids = torch.zeros_like(extended_question_ids)
         c_token_type_ids = torch.ones_like(context_ids)
         x_type_ids = torch.cat([q_token_type_ids, c_token_type_ids], dim=1).long()
-        x_attn_mask = torch.cat([last_question_attn_mask, ctx_attn_mask], dim=1)
+        x_attn_mask = torch.cat([extended_question_attn_mask, ctx_attn_mask], dim=1)
        # """
 
-        x = torch.cat([last_q_seq_tensor, _ctx_seq], dim=1)
+        x = torch.cat([extended_q_seq, _ctx_seq], dim=1)
 
         encoder_outputs = self.encoder(inputs_embeds=x, token_type_ids=x_type_ids, attention_mask=x_attn_mask)
         sequence_output = encoder_outputs[0]
@@ -209,9 +197,12 @@ class BiEncoder(nn.Module):
 
         return predictions
 
-    def cat_question(self, quesiton_ids):
+    def double_question(self, quesitons):
+        """
+        之前是一个问题对应两个context(正负例)，现在要把每个问题扩展成两个，也就是一个问题对应一个context
+        """
         cat_result = []
-        for single_q in quesiton_ids:
+        for single_q in quesitons:
             single_cat_q = torch.cat([single_q.unsqueeze(0)]*2)
             cat_result.append(single_cat_q)
         cat_result = torch.cat(cat_result, dim=0)
@@ -368,7 +359,7 @@ class BiEncoderNllLoss(object):
     def calc(
         self,
         input,
-        q_vectors: T,
+        linear_output: T,
         # ctx_vectors: T,
         positive_idx_per_question: list,
         hard_negative_idx_per_question: list = None,
@@ -383,10 +374,10 @@ class BiEncoderNllLoss(object):
         """
         # scores = self.get_scores(q_vectors, ctx_vectors)  # 计算相似度 q和c的dot  q:16 x 768, c: 32 x 768
 
-        q_num = q_vectors.size(0)
-        scores = q_vectors.view(q_num, -1)  # [4,2]
+        q_num = linear_output.size(0)
+        scores = linear_output.view(q_num, -1)  # [4,2]
 
-        #### manual test ###
+        #### manual test 下面的代码 ###
         # questions = input.questions
         # all_contexts = input.all_contexts
         # negative_contexts = input.negative_contexts

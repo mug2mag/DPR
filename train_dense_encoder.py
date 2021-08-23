@@ -560,7 +560,6 @@ class BiEncoderTrainer(object):
             if (i + 1) % cfg.train.gradient_accumulation_steps == 0:
                 self.optimizer.step()
                 scheduler.step()
-                self.optimizer.zero_grad()
                 self.biencoder.zero_grad()
 
             if i % log_result_step == 0:
